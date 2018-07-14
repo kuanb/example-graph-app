@@ -1,6 +1,8 @@
 import React, { Component } from 'react';
 import _ from 'lodash';
 import axios from 'axios';
+import turf from 'turf';
+import dissolve from '@turf/dissolve'
 
 import defaultTheme from 'mapbox-gl-draw/src/lib/theme.js';
 import MapboxGl from 'mapbox-gl/dist/mapbox-gl.js';
@@ -11,6 +13,7 @@ import mbxMapMatching from '@mapbox/mapbox-sdk/services/map-matching';
 // Also load in css
 import 'mapbox-gl/dist/mapbox-gl.css'
 import 'mapbox-gl-draw/dist/mapbox-gl-draw.css'
+import 'font-awesome/css/font-awesome.min.css'
 
 const MAPBOX_PUBLIC_TOKEN = 'pk.eyJ1Ijoia3VhbmIiLCJhIjoidXdWUVZ2USJ9.qNKXXP6z9_fKA8qrmpOi6Q';
 
@@ -25,11 +28,13 @@ class Map extends Component {
     this.makeClearResultsButton = this.makeClearResultsButton.bind(this);
     this.makeGraphAnalysisQuery = this.makeGraphAnalysisQuery.bind(this);
     this.makeBaselineAnalysisQuery = this.makeBaselineAnalysisQuery.bind(this);
+    this.makeLegend = this.makeLegend.bind(this);
 
     // Initialize state on component mount
     this.state = {
       map: null,
       draw: null,
+      baselineAnalysis: null,
       addedRoutes: makeEmptyFeatureCollection(),
       analysisIsStale: true,
       runAnalysisButtonText: 'Run network analysis'
@@ -42,7 +47,8 @@ class Map extends Component {
     const a = nextState.addedRoutes !== this.state.addedRoutes;
     const b = nextState.analysisIsStale !== this.state.analysisIsStale;
     const c = nextState.runAnalysisButtonText !== this.state.runAnalysisButtonText;
-    return a || b || c;
+    const d = nextState.baselineAnalysis !== this.state.baselineAnalysis;
+    return a || b || c || d;
   }
 
   // Once mounted, bring up the mapbox map
@@ -147,10 +153,48 @@ class Map extends Component {
       map.addLayer({
         id: 'baselineAnalysis',
         source: 'baselineAnalysis',
-        type: 'line',
+        type: 'circle',
         paint: {
-          'line-color': 'red',
-          'line-width': 2,
+          'circle-stroke-color': {
+            property: 'type',
+            type: 'categorical',
+            stops: [
+              ['weak', '#ef9b00'],
+              ['strong', '#0c50ff']]
+          },
+          'circle-radius': {
+            property: 'centrality',
+            type: 'exponential',
+            stops: [
+              [0.0, 0],
+              [0.001, 0.5],
+              [0.01, 1],
+              [0.025, 2],
+              [0.05, 4],
+              [0.075, 8],
+              [0.10, 12],
+              [0.20, 16],
+              [0.50, 20],
+            ]
+          },
+          'circle-color': {
+            property: 'type',
+            type: 'categorical',
+            stops: [
+              ['weak', '#ffc568'],
+              ['strong', '#6691ff']]
+          },
+          'circle-opacity': 0.75,
+          'circle-stroke-width':  {
+            property: 'centrality',
+            type: 'exponential',
+            stops: [
+              [0.0, 0],
+              [0.001, 0.5],
+              [0.01, 1],
+              [0.20, 2],
+            ]
+          },
         }
       });
 
@@ -288,19 +332,53 @@ class Map extends Component {
   }
 
   makeAnalyzeBaseButton() {
-    return (
-      <div className='tl-button'
-           onClick={this.makeBaselineAnalysisQuery}>
-        View Baseline Analysis
-      </div>
-    );
+    // TODO: Button additions should be dynamic
+    // Figure out if this should be first of second button
+    let otherClass = '';
+    const fs = this.state.addedRoutes.features;
+    const fsOk = fs && (fs.length > 0);
+    const showOkIsStale = this.state.analysisIsStale && fsOk;
+    const showOkIsFresh = !this.state.analysisIsStale && fsOk;
+    if (showOkIsStale || showOkIsFresh) {
+      otherClass = 'second-button';
+    }
+
+    if (!this.state.baselineAnalysis) {
+      return (
+        <div className={`tl-button ${otherClass}`}
+             onClick={this.makeBaselineAnalysisQuery}>
+          <i className="fa fa-eye"></i> View Baseline Analysis
+        </div>
+      );
+    } else {
+      return (
+        <div className={`tl-button ${otherClass}`}
+             onClick={() => {
+              this.setState({
+                baselineAnalysis: null,
+              });
+              const efc = makeEmptyFeatureCollection();
+              this.state.map.getSource('baselineAnalysis').setData(efc);
+             }}>
+          <i className="fa fa-eye-slash"></i> Hide Baseline Analysis
+        </div>
+      );
+    }
   }
 
   makeBaselineAnalysisQuery(e) {
     axios.get('http://127.0.0.1:5000/baseline_analysis')
     .then(res => {
-      console.log('got res', res.data)
+      const cProcessed = res.data.centrality;
 
+      this.setState({
+        baselineAnalysis: {
+          centrality: cProcessed,
+        }
+      });
+      
+      // And add to the map
+      this.state.map.getSource('baselineAnalysis').setData(cProcessed);
     });
   }
 
@@ -309,6 +387,11 @@ class Map extends Component {
       runAnalysisButtonText: 'Querying...',
     });
     const ar = this.state.addedRoutes;
+
+    // Before posting, clear the current baseline if it is
+    // shown on map
+    const efc = makeEmptyFeatureCollection();
+    this.state.map.getSource('baselineAnalysis').setData(efc);
 
     axios.post('http://127.0.0.1:5000/analyze', ar)
     .then(res => {
@@ -321,6 +404,37 @@ class Map extends Component {
         runAnalysisButtonText: 'Run network analysis'
       });
     });
+  }
+
+  makeLegend() {
+    const configureValues = [
+      {key: 'High-access Node (B)', color: '#6691ff'},
+      {key: 'Low-access Node (B)', color: '#ffc568'},
+      {key: 'Improved Relative Access (AF)', color: '#00ff04'},
+      {key: 'Decreased Relative Access (AF)', color: '#ff0000'},
+    ]
+    const mappedVals = configureValues.map((cv, i) => {
+      const styles = {
+        width: '10px',
+        height: '10px',
+        margin: '0 5px',
+        backgroundColor: cv.color
+      };
+      return (
+        <div key={`${cv.key}_${i}`}>
+          <span style={styles}></span>
+          {cv.key}
+        </div>
+      );
+    });
+    return (
+      <div id='legend'
+           className='legend'>
+        <h4>Analysis Feedback Legend</h4>
+        <p>B = Baseline, AF = Analysis Feedback</p>
+        {mappedVals}
+      </div>
+    );
   }
 
   render() {
@@ -337,14 +451,14 @@ class Map extends Component {
       topLeftButton = this.makeRunButton();
     } else if (showOkIsFresh) {
       topLeftButton = this.makeClearResultsButton();
-    } else if (!showOkIsStale && !showOkIsFresh && fs.length === 0) {
-      topLeftButton = this.makeAnalyzeBaseButton();
     }
 
     return (
       <div className='mapbox-map'
            ref={(x) => { this.container = x; }}>
         {topLeftButton}
+        {this.makeAnalyzeBaseButton()}
+        {this.makeLegend()}
       </div>
     )
   }

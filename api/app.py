@@ -45,27 +45,44 @@ def healthy():
 @app.route('/baseline_analysis')
 def return_baseline_analysis():
     a = np.array([orig_node_scores[k] for k in orig_node_scores.keys()])
-    std_15 = (np.std(a) * 1.5)
-    keep_ids = [k for k in orig_node_scores.keys() if orig_node_scores[k] >= std_15]
+    tenth_pct = np.percentile(a, 10)
+    fiftieth_pct = np.percentile(a, 50)
+    ninetieth_pct = np.percentile(a, 90)
 
     # Generate betweenness centrality as a output measure feature
-    high_centrality = {
+    # and sort by quantiles (10th, 90th percentiles)
+    centrality_fc = {
         'type': 'FeatureCollection',
         'features': []}
     for i, node in G_trimmed_global.nodes(data=True):
-        high_centrality['features'].append({
-            'type': 'Feature',
-            'geometry': {
-                'type': 'Point',
-                'coordinates': [node['x'], node['y']]
-            },
-            'properties': {
-                'centrality': round(orig_node_scores[i], 5)
-            }
-        })
+        centrality = round(orig_node_scores[i], 5)
+        if centrality >= ninetieth_pct:
+            centrality_fc['features'].append({
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [node['x'], node['y']]
+                },
+                'properties': {
+                    'centrality': centrality - fiftieth_pct,
+                    'type': 'strong'
+                }
+            })
+        elif centrality <= tenth_pct:
+            centrality_fc['features'].append({
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [node['x'], node['y']]
+                },
+                'properties': {
+                    'centrality': fiftieth_pct - centrality,
+                    'type': 'weak'
+                }
+            })
 
     res = {
-        'high_centrality': high_centrality,
+        'centrality': centrality_fc
     }
     return jsonify(res)
 
