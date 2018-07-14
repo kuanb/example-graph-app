@@ -13,7 +13,6 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import 'mapbox-gl-draw/dist/mapbox-gl-draw.css'
 
 const MAPBOX_PUBLIC_TOKEN = 'pk.eyJ1Ijoia3VhbmIiLCJhIjoidXdWUVZ2USJ9.qNKXXP6z9_fKA8qrmpOi6Q';
-const MAPBOX_ACT_TILESET = 'kuanb.cjjf78ofn00656wqfklj2zj9g-9cpqi';
 
 class Map extends Component {
   constructor (props) {
@@ -22,18 +21,28 @@ class Map extends Component {
     this.updateCustomLine = this.updateCustomLine.bind(this);
     this.updateFromDelete = this.updateFromDelete.bind(this);
     this.makeRunButton = this.makeRunButton.bind(this);
+    this.makeAnalyzeBaseButton = this.makeAnalyzeBaseButton.bind(this);
+    this.makeClearResultsButton = this.makeClearResultsButton.bind(this);
     this.makeGraphAnalysisQuery = this.makeGraphAnalysisQuery.bind(this);
+    this.makeBaselineAnalysisQuery = this.makeBaselineAnalysisQuery.bind(this);
 
     // Initialize state on component mount
     this.state = {
       map: null,
       draw: null,
-      addedRoutes: {
-        type: 'FeatureCollection',
-        features: [],
-      },
-      buttonValue: 'Run network analysis',
+      addedRoutes: makeEmptyFeatureCollection(),
+      analysisIsStale: true,
+      runAnalysisButtonText: 'Run network analysis'
     };
+  }
+
+  // Speed up re-renders by specifying what we need
+  // React to keep track of
+  shouldComponentUpdate(nextProps, nextState) {
+    const a = nextState.addedRoutes !== this.state.addedRoutes;
+    const b = nextState.analysisIsStale !== this.state.analysisIsStale;
+    const c = nextState.runAnalysisButtonText !== this.state.runAnalysisButtonText;
+    return a || b || c;
   }
 
   // Once mounted, bring up the mapbox map
@@ -103,31 +112,11 @@ class Map extends Component {
 
       // // Also add GeoJSON of the base network to the map
       const { networkShape } = this.props;
-      // networkShape.features.forEach(function (line) {
-      //   const id = line.properties.id;
-      //   map.addLayer({
-      //     id: `route_${id}`,
-      //     type: 'line',
-      //     source: {
-      //       type: 'geojson',
-      //       data: simplifyLine(line),
-      //       tolerance: 2,
-      //     },
-      //     layout: {
-      //       'line-join': 'round',
-      //       'line-cap': 'round'
-      //     },
-      //     paint: {
-      //       'line-color': generateRandomColor(),
-      //       'line-width': 1
-      //     },
-      //   });
-      // });
-
       networkShape.features = networkShape.features.map(line => {
         line.properties.color = generateRandomColor();
         return simplifyLine(line);
-      })
+      });
+
       map.addLayer({
         id: 'originalRoutes',
         type: 'line',
@@ -149,10 +138,26 @@ class Map extends Component {
         },
       });
 
+      // Add baseline analysis source
+      map.addSource('baselineAnalysis', {
+          type: 'geojson',
+          data: makeEmptyFeatureCollection(),
+      });
+
+      map.addLayer({
+        id: 'baselineAnalysis',
+        source: 'baselineAnalysis',
+        type: 'line',
+        paint: {
+          'line-color': 'red',
+          'line-width': 2,
+        }
+      });
+
       // And add a placeholder source for when we get responses from
       // the backend from analysis runs
       map.addSource('analysisResults', {
-          type: "geojson",
+          type: 'geojson',
           data: makeEmptyFeatureCollection(),
       });
 
@@ -161,51 +166,69 @@ class Map extends Component {
         source: 'analysisResults',
         type: 'circle',
         paint: {
-          'circle-color': {
+          'circle-stroke-color': {
             stops: [
-              [-1.0, '#ff0000'],
-              [-0.8, '#ff0000'],
-              [-0.6, '#ff0000'],
-              [-0.4, '#ff0000'],
-              [-0.2, '#ff0000'],
+              [-0.50, '#ff0000'],
+              [-0.20, '#ff0000'],
+              [-0.10, '#ff0000'],
+              [-0.05, '#ff0000'],
+              [-0.01, '#ff0000'],
               [0.0, '#cccccc'],
-              [0.2, '#00ff04'],
-              [0.4, '#00ff04'],
-              [0.6, '#00ff04'],
-              [0.8, '#00ff04'],
-              [1.0, '#00ff04'],
+              [0.01, '#00ff04'],
+              [0.05, '#00ff04'],
+              [0.10, '#00ff04'],
+              [0.20, '#00ff04'],
+              [0.50, '#00ff04'],
             ]
           },
           'circle-radius': {
             property: 'percent_change',
             type: 'exponential',
             stops: [
-              [-1.0, 32],
-              [-0.8, 16],
-              [-0.6, 8],
-              [-0.4, 4],
-              [-0.2, 2],
-              [-0.0, 1],
-              [0.0, 1],
-              [0.2, 2],
-              [0.4, 4],
-              [0.6, 8],
-              [0.8, 16],
-              [1.0, 32],
+              [-0.50, 10],
+              [-0.20, 8],
+              [-0.10, 6],
+              [-0.05, 4],
+              [-0.01, 2],
+              [0.0, 0],
+              [0.01, 2],
+              [0.05, 4],
+              [0.10, 6],
+              [0.20, 8],
+              [0.50, 10],
             ]
           },
-          'circle-opacity': 0.8
+          'circle-color': 'rgba(0,0,0,0)',
+          'circle-opacity': 1,
+          'circle-stroke-width':  {
+            property: 'percent_change',
+            type: 'exponential',
+            stops: [
+              [-0.20, 2],
+              [-0.01, 1],
+              [0.0, 0],
+              [0.01, 1],
+              [0.20, 2],
+            ]
+          },
         }
       });
     })
   }
 
-  updateFromDelete (e) {
+  updateFromDelete(e) {
     const draw = this.state.draw;
-    this.setState({ addedRoutes: draw.getAll(), });
+    this.setState({
+      addedRoutes: draw.getAll(),
+      analysisIsStale: true,
+    });
+
+    // Also drop the abalysis results since they are no longer fresh
+    const efc = makeEmptyFeatureCollection();
+    this.state.map.getSource('analysisResults').setData(efc);
   }
 
-  updateCustomLine (e) {
+  updateCustomLine(e) {
     const draw = this.state.draw;
     const baseClient = mbxClient({ accessToken: MAPBOX_PUBLIC_TOKEN });
     const mapMatchingService = mbxMapMatching(baseClient);
@@ -218,8 +241,8 @@ class Map extends Component {
     });
     
     mapMatchingService.getMatching({
-      tidy: false,
-      profile: 'driving',
+      tidy: true,
+      profile: 'walking',  // since driving leads to oversensitivity
       geometries: 'geojson',
       steps: false,
       points,
@@ -235,45 +258,93 @@ class Map extends Component {
       }
 
       // Update the state with the latest feature collection
-      this.setState({ addedRoutes: draw.getAll(), });
+      this.setState({
+        addedRoutes: draw.getAll(),
+        analysisIsStale: true,
+      });
     });
   }
 
-  makeRunButton () {
+  makeRunButton() {
     return (
-      <div className='run-analysis-button'
+      <div className='tl-button run-analysis-button'
            onClick={this.makeGraphAnalysisQuery}>
-        {this.state.buttonValue}
+        {this.state.runAnalysisButtonText}
       </div>
     );
   }
 
-  // Speed up re-renders by specifying what we need
-  // React to keep track of
-  shouldComponentUpdate(nextProps, nextState) {
-    const a = nextState.addedRoutes !== this.state.addedRoutes;
-    return a;
+  makeClearResultsButton() {
+    return (
+      <div className='tl-button clear-analysis-button'
+           onClick={() => {
+            const efc = makeEmptyFeatureCollection();
+            this.state.map.getSource('analysisResults').setData(efc);
+            this.setState({ analysisIsStale: true, });
+           }}>
+        Clear analysis results
+      </div>
+    );
   }
 
-  makeGraphAnalysisQuery () {
+  makeAnalyzeBaseButton() {
+    return (
+      <div className='tl-button'
+           onClick={this.makeBaselineAnalysisQuery}>
+        View Baseline Analysis
+      </div>
+    );
+  }
+
+  makeBaselineAnalysisQuery(e) {
+    axios.get('http://127.0.0.1:5000/baseline_analysis')
+    .then(res => {
+      console.log('got res', res.data)
+
+    });
+  }
+
+  makeGraphAnalysisQuery(e) {
+    this.setState({
+      runAnalysisButtonText: 'Querying...',
+    });
     const ar = this.state.addedRoutes;
 
     axios.post('http://127.0.0.1:5000/analyze', ar)
     .then(res => {
       // Do something with the result
-      console.log('returned!', this.state.map, res.data);
       this.state.map.getSource('analysisResults').setData(res.data);
-    })
+
+      // Also analysis is now up to date
+      this.setState({
+        analysisIsStale: false,
+        runAnalysisButtonText: 'Run network analysis'
+      });
+    });
   }
 
   render() {
     // Note use of ref here allows us to pass the container to
     // the mapbox mount step
     const fs = this.state.addedRoutes.features;
+    const fsOk = fs && (fs.length > 0);
+    const showOkIsStale = this.state.analysisIsStale && fsOk;
+    const showOkIsFresh = !this.state.analysisIsStale && fsOk;
+
+    // Generate button if one should be made
+    let topLeftButton = null
+    if (showOkIsStale) {
+      topLeftButton = this.makeRunButton();
+    } else if (showOkIsFresh) {
+      topLeftButton = this.makeClearResultsButton();
+    } else if (!showOkIsStale && !showOkIsFresh && fs.length === 0) {
+      topLeftButton = this.makeAnalyzeBaseButton();
+    }
+
     return (
       <div className='mapbox-map'
-           ref={(x) => { this.container = x }}>
-        { fs && fs.length ? this.makeRunButton() : null }
+           ref={(x) => { this.container = x; }}>
+        {topLeftButton}
       </div>
     )
   }

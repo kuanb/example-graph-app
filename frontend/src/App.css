@@ -11,11 +11,11 @@ body {
   height: 100vh;
 }
 
-.run-analysis-button {
+.tl-button {
   position: fixed;
   top: 10px;
   left: 10px;
-  background-color: blue;
+  background-color: black;
   border: 1px solid white;
   color: white;
   z-index: 100;
@@ -28,12 +28,42 @@ body {
   width: 150px;
 }
 
+.tl-button:hover {
+  background-color: white;
+  color: black;
+}
+
+.tl-button:active {
+  background-color: white;
+  color: red;
+}
+
+.run-analysis-button {
+  background-color: blue;
+  color: white;
+}
+
 .run-analysis-button:hover {
   background-color: white;
   color: blue;
 }
 
 .run-analysis-button:active {
+  background-color: yellow;
+  color: red;
+}
+
+.clear-analysis-button {
+  background-color: darkred;
+  color: white;
+}
+
+.clear-analysis-button:hover {
+  background-color: white;
+  color: darkred;
+}
+
+.clear-analysis-button:active {
   background-color: yellow;
   color: red;
 }

@@ -2,6 +2,7 @@ import json
 from flask import Flask, jsonify, request
 
 import networkx as nx
+import numpy as np
 import peartree as pt
 
 app = Flask(__name__)
@@ -35,9 +36,39 @@ G_trimmed_global = make_trimmed_graph()
 orig_node_scores = nx.betweenness_centrality(G_trimmed_global)
 print(' * Loaded graph and calculated node centrality')
 
+
 @app.route('/healthy')
 def healthy():
     return 'healthy'
+
+
+@app.route('/baseline_analysis')
+def return_baseline_analysis():
+    a = np.array([orig_node_scores[k] for k in orig_node_scores.keys()])
+    std_15 = (np.std(a) * 1.5)
+    keep_ids = [k for k in orig_node_scores.keys() if orig_node_scores[k] >= std_15]
+
+    # Generate betweenness centrality as a output measure feature
+    high_centrality = {
+        'type': 'FeatureCollection',
+        'features': []}
+    for i, node in G_trimmed_global.nodes(data=True):
+        high_centrality['features'].append({
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Point',
+                'coordinates': [node['x'], node['y']]
+            },
+            'properties': {
+                'centrality': round(orig_node_scores[i], 5)
+            }
+        })
+
+    res = {
+        'high_centrality': high_centrality,
+    }
+    return jsonify(res)
+
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -51,6 +82,7 @@ def analyze():
             'headway': 900,
             'average_speed': 16,
             'stop_distance_distribution': 402}
+        feat['geometry']['coordinates'] = feat['geometry']['coordinates'][:5]
         new_feats.append(feat)
     sent_gj['features'] = new_feats
 
@@ -63,26 +95,29 @@ def analyze():
     for nok in orig_node_scores.keys():
         orig_val = orig_node_scores[nok]
         new_val = nodes_new_score[nok]
-        fac = 10000
-        if orig_val == 0:
+        if orig_val == 0 and new_val > 0:
             change = 1
+        elif orig_val == 0 and new_val == 0:
+            change = 0
         else:
             diff = (new_val - orig_val)
-            change = (diff * fac) / (orig_val * fac)
+            change = (diff / orig_val)
         
         n = G_temp.node[nok]
         x = n['x']
         y = n['y']
         
-        change_impacts['features'].append({
-            'type': 'Feature',
-            'geometry': {
-                'type': 'Point',
-                'coordinates': [x, y]
-            },
-            'properties': {
-                'percent_change': change
-            }
-        })
+        # Do not return values that have no change
+        if change > 0:
+            change_impacts['features'].append({
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'Point',
+                    'coordinates': [x, y]
+                },
+                'properties': {
+                    'percent_change': change
+                }
+            })
 
-    return jsonify(change_impacts) 
+    return jsonify(change_impacts)
