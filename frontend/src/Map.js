@@ -387,12 +387,6 @@ class Map extends Component {
       runAnalysisButtonText: 'Querying...',
     });
     const ar = this.state.addedRoutes;
-
-    // Before posting, clear the current baseline if it is
-    // shown on map
-    const efc = makeEmptyFeatureCollection();
-    this.state.map.getSource('baselineAnalysis').setData(efc);
-
     axios.post('http://127.0.0.1:5000/analyze', ar)
     .then(res => {
       // Do something with the result
